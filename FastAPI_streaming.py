@@ -16,21 +16,33 @@ from langchain.callbacks.streaming_aiter import AsyncIteratorCallbackHandler
 from langchain.callbacks.streaming_stdout_final_only import FinalStreamingStdOutCallbackHandler
 from langchain.schema import LLMResult
 from functools import lru_cache
+import time
+import pandas as pd
+from prompt_templates import customer_query_prompt, entities_prompt, auto_reply_generic_prompt, auto_reply_only_crm_prompt, auto_reply_crm_mix_prompt_v1, auto_reply_crm_mix_prompt_v2
 
+## Llama CPP imports
 
+from llama_cpp import Llama
+from guidance import models, gen, select
+import guidance
+import re
+import json
+from huggingface_hub import hf_hub_download
 
 os.environ['XDG_CACHE_HOME'] = './models/'
 
-config = {'temperature': 0.1, 'context_length': 2048, 'gpu_layers':8,'max_new_tokens' : 512, "batch_size" : 512 }
-
-model_id = "TheBloke/dolphin-2.6-mistral-7B-GGUF"
-model_file = "dolphin-2.6-mistral-7b.Q4_K_S.gguf"
+# model_id = "TheBloke/dolphin-2.6-mistral-7B-GGUF"
+# model_file = "dolphin-2.6-mistral-7b.Q4_K_S.gguf"
 # model_id = "TheBloke/phi-2-GGUF"
 # model_file = "phi-2.Q8_0.gguf"
 
-#model_id = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"
-#model_file = "tinyllama-1.1b-chat-v1.0.Q8_0.gguf"
+model_id = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"
+model_file = "tinyllama-1.1b-chat-v1.0.Q8_0.gguf"
 
+
+
+
+config = {'temperature': 0.1, 'context_length': 2048, 'gpu_layers':8,'max_new_tokens' : 512, "batch_size" : 512 }
 
 
 def build_llm(model_id, model_file, config):
@@ -90,10 +102,6 @@ async def run_call(query: str, stream_it: AsyncCallbackHandler, llm_model, stop_
     await asyncio.to_thread(llm_model, query, stop_words)
     print("after LLM")
 
-# request input format
-class Query(BaseModel):
-    text: str
-
 
 async def wrap_done(fn: Awaitable, event: asyncio.Event):
         """Wrap an awaitable with a event to signal when it's done or an exception is raised."""
@@ -119,124 +127,53 @@ async def create_gen(query: str, stream_it: AsyncCallbackHandler, llm_model, sto
 
 
 
-def customer_query_prompt(text):
-  prompt = f"""
-Customer message: Hello my name is ajay sagar and I want to change my phone number and address. please give me more time for payment of my next emi.
-Customer Queries:
-- Customer wants to change phone number.
-- Customer wants to change address.
-- Customer wants more time for next EMI payment.
-Finished.
-
-Customer message:I want my Paytm postpaid account statement and want noc for the loan
-Customer Queries:
-- Customer wants Paytm postpaid account statment.
-- Customer wants NOC for the loan
-Finished.
-
-Customer message: Hi, I am trying to reach you guys from 2 days i am not able to reach. please Clear my late fees. I need to preclose the loan need pre closure letter and payment link. Regards, Lokesh.S
-Customer Queries:
-- Customer is requesting to clear his late fee.
-- Customer wants to pre-close the loan.
-- Customer needs the pre-closure letter.
-Finished.
-
-Customer message: Dear Sir/mam,Kindly inhance my Paytm postpaid limit. Regard Dhiraj Kumar Mishra
-Customer Queries:
-- Customer is requesting credit limit increase for his Paytm postpaid account.
-Finished.
-
-Customer message: {text}
-Customer Queries:
-"""
-  return prompt
 
 
-def entities_prompt(text):
-    prompt =  '''
-List of Entitites : [Name, Phone Number, Email Mail Address, Account Number]
-Instruction : Retrieved Entities should always be present in the List of Entities.
+def load_crm_data():
+    crm_data = pd.read_excel("CRM Dummy Data.xlsx")
+    crm_data["Due Date"] = crm_data["Due Date"].astype(str)
+    crm_data["Open Date"] = crm_data["Open Date"].astype(str)
+    return crm_data
 
-Customer Text: Hello my name is ajay sagar and I want to change my phone number and address. please give me more time for payment of my next emi.
-Retrieved Entities:
-{
-"Name" : "Ajay Sagar",
-"Phone Number" : "None",
-"Email Mail Address" : "None",
-"Account Number" : "None"
-}
-Finished Retrieving Entities
-
-Customer Text: One of my postpaid overdue amount is active, my postpaid account is closed but the loan is active, I have already paid all those amounts respectively, this is impacting my credit score, please help with this as soon as possible. Anshuman Chaudhary 7481082179. REach out at anshu.man @yahuuu.com
-Retrieved Entities:
-{
-"Name" : "Anshuman Chaudhary",
-"Phone Number" : "7481082179",
-"Email Mail Address" : "anshu.man@yahuuu.com",
-"Account Number" : "None"
-}
-Finished Retrieving Entities
-
-Customer Text: Dear sir, I am Chandrakant y patil account number -PYTMPPABFL67654534345 need account statement Chandrakant y patil in urgent basis
-Retrieved Entities:
-{
-"Name" : "Chandrakant y patil",
-"Phone Number" : "None",
-"Email Mail Address" : "None",
-"Account Number" : "PYTMPPABFL67654534345"
-}
-Finished Retrieving Entities'''
-
-    add_text =  '''
-Customer Text:{}
-Retrieved Entities:
-'''.format(text)
-
-    promptnew = prompt + add_text
- 
-
-    return promptnew
+def check_registered(from_email, crm_data):
+    if from_email.strip().lower() in crm_data["Email ID"].str.strip().str.lower().to_list():
+        return "YES"
+    else:
+        return "NO"
 
 
-def auto_reply_prompt(text):
-    input_prompt = f'''
-Just acknowledge the email with a generic response on behalf of the customer support team that we have got your request regarding the issue mentioned by customer and someone will respond shortly.
-Keep the response short within 2-3 lines.
-
-below is the response format :
-
-Dear [CUSTOMER NAME],
-
-
-[MESSAGE]
+def get_data_from_email(from_email, crm_data):
+    filtered_data = crm_data[crm_data["Email ID"].str.strip().str.lower() == from_email.strip().lower()]
+    if filtered_data.shape[0]>0:
+        json_data = filtered_data.to_dict(orient='records')[0]
+    else:
+        json_data= {}
+    return json_data
 
 
-Regards,
-Customer Support Team
+def get_data_from_account(account_number, crm_data):
+    filtered_data = crm_data[crm_data["Account number"].str.strip().str.lower() == account_number.strip().lower()]
+    if filtered_data.shape[0]>0:
+        json_data = filtered_data.to_dict(orient='records')[0]
+    else:
+        json_data= {}
+    return json_data
 
+crm_data = load_crm_data()
+intent_category_mapping = pd.read_excel("intent_Categorization.xlsx")
 
-Customer message: {text}
-Response:
-'''
-    return input_prompt
-
-
-
-
-
-
-
+CRM_INTENTS = intent_category_mapping[intent_category_mapping["CRM Intents"] == "YES"]["Intent"].to_list()
+KNOWLEDGE_BASE_INTENTS = intent_category_mapping[intent_category_mapping["Knowledge Intents"] == "YES"]["Intent"].to_list()
 
 
 app = FastAPI()
+
 # request input format
 class Query(BaseModel):
     text: str
 
-
-
 @app.get("/get_summary")
-async def split_customer_text(query: Query = Body(...)):
+async def get_summary(query: Query = Body(...)):
     # few-shot example
     print(query)
     stream_it = AsyncCallbackHandler()
@@ -247,7 +184,7 @@ async def split_customer_text(query: Query = Body(...)):
     return StreamingResponse(gen, media_type="text/event-stream")
 
 @app.get("/entities")
-async def split_customer_text(query: Query = Body(...)):
+async def get_entities(query: Query = Body(...)):
     # few-shot example
     print(query)
     stream_it = AsyncCallbackHandler()
@@ -258,23 +195,144 @@ async def split_customer_text(query: Query = Body(...)):
     return StreamingResponse(gen, media_type="text/event-stream")
 
 
+class AutoReply(BaseModel):
+    text: str
+    meta : dict
+
 @app.get("/auto_reply")
-async def split_customer_text(query: Query = Body(...)):
+async def get_auto_reply(query: AutoReply = Body(...)):
     # few-shot example
     print(query)
-    stream_it = AsyncCallbackHandler()
     customer_mail = query.text
-    input_prompt = auto_reply_prompt(customer_mail)
+    meta = query.meta
+
+    if meta["auto_response_type"] == "HyperPersonal - CRM + KB":
+        print("generate CRM Response ")
+        print("generate KB Response ")
+        print("Generic response for other query if there")
+        input_prompt = auto_reply_crm_mix_prompt_v2(customer_mail,input_data=meta["crm_data"],intents_crm=meta["intents_crm"],intents_others=meta["intents_others"])
 
 
+    elif meta["auto_response_type"] == "HyperPersonal - CRM":
+        print( "Generate CRM Response")
+        print("Generic response for other query if there")
+        input_prompt = auto_reply_only_crm_prompt(customer_mail,input_data=meta["crm_data"],intents_crm=meta["intents_crm"])
+
+    elif meta["auto_response_type"] == "HyperPersonal - KB":
+        print("Generate KB Response")
+        print("Generic response for other query if there")
+        input_prompt = auto_reply_generic_prompt(customer_mail)
+    
+    else:
+        print("Generate Generic Response for all queries")
+        input_prompt =  auto_reply_generic_prompt(customer_mail)
+
+
+
+    stream_it = AsyncCallbackHandler()
     gen = create_gen(input_prompt, stream_it, llm_model=llm1, stop_words = ["Response:", "Customer message", "Note:"])
 
     return StreamingResponse(gen, media_type="text/event-stream")
 
 
 
+
+
+@app.get("/intent")
+async def get_intent(query: Query = Body(...)):
+    print(query)
+
+    intents = ["Due Date Request", "Due Amount Request", "Address Change Request" ]
+
+    return {"intent_tags": intents}
+
+
+
+
+class DetailsFormat(BaseModel):
+    text: str
+    from_mail : str
+    intent_response : list
+    entities_response: dict
+
+@app.get("/get_details")
+async def get_intent(query: DetailsFormat = Body(...)):
+    print(query)
+
+    customer_mail = query.text
+    predicted_intents = query.intent_response
+    CRM_INTENTS1 = [i.lower().strip() for i in CRM_INTENTS ]
+    KNOWLEDGE_BASE_INTENTS1 = [i.lower().strip() for i in KNOWLEDGE_BASE_INTENTS ]
+    intents_crm = [i for i in predicted_intents if i.lower().strip() in CRM_INTENTS1]
+    intent_kb = [i for i in predicted_intents if  i.lower().strip() in KNOWLEDGE_BASE_INTENTS1]
+    intents_others = [i for i in predicted_intents if i.lower().strip() not in CRM_INTENTS1 + KNOWLEDGE_BASE_INTENTS1]
+
+    from_mail = query.from_mail
+
+    case_category =    list(intent_category_mapping[intent_category_mapping["Intent"].isin(predicted_intents)]["Case Category Department"].unique())
+    case_assign = intent_category_mapping[intent_category_mapping["Intent"].isin(predicted_intents)][["Intent", "Assigned To"]]
+    case_assign = dict(zip(case_assign['Intent'], case_assign['Assigned To']))
+
+    timestamp_id = str(int(time.time()))
+    registered = check_registered(from_mail, crm_data)
+
+
+    if (registered == "YES") and (len(intents_crm)>0):
+        query_crm_db = "YES"
+        input_data = get_data_from_email(from_mail, crm_data)
+    else:
+        query_crm_db = "NO"
+        input_data  = {}
+    
+
+    if len(intent_kb)>0:
+        query_knowledge_base = "YES"
+    else:
+        query_knowledge_base = "NO"
+    
+
+    if query_crm_db == "YES" and query_knowledge_base == "YES":
+        auto_response_type = "HyperPersonal - CRM + KB"
+        auto_response_flg = "YES"
+
+    elif query_crm_db== "YES" and query_knowledge_base =="NO":
+        auto_response_type = "HyperPersonal - CRM"
+        auto_response_flg = "YES"
+    
+    elif query_crm_db== "NO" and query_knowledge_base =="YES":
+        auto_response_type = "HyperPersonal - KB"
+        auto_response_flg = "YES"
+    
+    else:
+        auto_response_type = "HyperPersonal- Generic"
+        auto_response_flg = "YES"
+
+
+
+
+    meta = {
+     "case_id": timestamp_id,
+    "status":"pending",
+    "case_category": case_category,
+    "assigned_to" : case_assign,
+    "query_crm_db" : query_crm_db,
+    "query_knowledge_base" : query_knowledge_base,
+    "auto_response_type": auto_response_type,
+    "auto_response_flg": auto_response_flg,
+    "registered": registered,
+    "crm_data": input_data,
+    "intents_crm" : intents_crm,
+    "intent_kb" : intent_kb,
+    "intents_others" : intents_others
+    } 
+
+    return {"meta": meta}
+
+
+
+
 @app.get("/generic")
-async def split_customer_text(query: Query = Body(...)):
+async def generic(query: Query = Body(...)):
     # few-shot example
     print(query)
     stream_it = AsyncCallbackHandler()
@@ -285,6 +343,8 @@ async def split_customer_text(query: Query = Body(...)):
     gen = create_gen(input_prompt, stream_it, llm_model=llm1, stop_words = ["Finished", "finished"])
 
     return StreamingResponse(gen, media_type="text/event-stream")
+
+
 
 
 
