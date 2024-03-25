@@ -40,7 +40,7 @@ print(torch.cuda.device_count())
 os.environ['XDG_CACHE_HOME'] = './models/'
 
 model_id = "TheBloke/dolphin-2.6-mistral-7B-GGUF"
-model_file = "dolphin-2.6-mistral-7b.Q4_K_M.gguf"
+model_file = "dolphin-2.6-mistral-7b.Q8_0.gguf"
 
 # model_id = "TheBloke/phi-2-GGUF"
 # model_file = "phi-2.Q8_0.gguf"
@@ -50,8 +50,8 @@ model_file = "dolphin-2.6-mistral-7b.Q4_K_M.gguf"
 
 
 
-config = {'temperature': 0.0, 'context_length': 2048, 'gpu_layers':6, "top_k" : 1, "seed" :1,
-          'max_new_tokens' : 512, "batch_size": 256, "stream" : True,  "stop" :["Queries :", "queries:", "Finished", "finished"]}
+config = {'temperature': 0.0, 'context_length': 2048, 'gpu_layers':25, "top_k" : 1, "seed" :1,
+          'max_new_tokens' : 512, "batch_size": 1024, "stream" : True,  "stop" :["Queries :", "queries:", "Finished", "finished"]}
 # config = {'temperature': 0.1, 'context_length': 2048, 'gpu_layers':8,'max_new_tokens' : 512, "batch_size" : 512 }
 
 
@@ -205,7 +205,7 @@ def get_data_from_account(account_number, crm_data):
 crm_data = load_crm_data()
 
 global intent_category_mapping
-
+intent_category_mapping = pd.read_excel("intent_categorization_v2.xlsx")
 
 
 app = FastAPI()
@@ -670,7 +670,7 @@ async def delete_row(row_data: dict):
 
 
 if __name__ == "__main__":
-    uvicorn.run("FastAPI_streaming:app", host="localhost", port=8000, reload=False,
+    uvicorn.run("FastAPI_streaming:app", host="0.0.0.0", port=8989, reload=False,
                 workers=1)
 
 
