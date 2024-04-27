@@ -40,18 +40,18 @@ print(torch.cuda.device_count())
 os.environ['XDG_CACHE_HOME'] = './models/'
 
 model_id = "TheBloke/dolphin-2.6-mistral-7B-GGUF"
-model_file = "dolphin-2.6-mistral-7b.Q8_0.gguf"
+model_file = "dolphin-2.6-mistral-7b.Q4_K_M.gguf"
 
 # model_id = "TheBloke/phi-2-GGUF"
 # model_file = "phi-2.Q8_0.gguf"
 
 # model_id = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"
-# model_file = "tinyllama-1.1b-chat-v1.0.Q8_0.gguf"
+# model_file = "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
 
 
 
-config = {'temperature': 0.0, 'context_length': 2048, 'gpu_layers':25, "top_k" : 1, "seed" :1,
-          'max_new_tokens' : 512, "batch_size": 1024, "stream" : True,  "stop" :["Queries :", "queries:", "Finished", "finished"]}
+config = {'temperature': 0.0, 'context_length': 2048, 'gpu_layers':18, "top_k" : 1, "seed" :1,
+          'max_new_tokens' : 512, "batch_size": 512, "stream" : True,  "stop" :["Queries :", "queries:", "Finished", "finished"]}
 # config = {'temperature': 0.1, 'context_length': 2048, 'gpu_layers':8,'max_new_tokens' : 512, "batch_size" : 512 }
 
 
@@ -61,7 +61,7 @@ def build_llm(model_id, model_file, config):
   llm = CTransformers(model= model_id,
                           model_file= model_file,
                           config=config,
-                          threads=os.cpu_count() -2 ,
+                          threads=os.cpu_count() -1 ,
                           streaming=True,
                           callbacks = []
                         )
